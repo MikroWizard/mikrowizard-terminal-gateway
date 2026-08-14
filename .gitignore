@@ -1,0 +1,16 @@
+# Environment files
+.env
+gateway.env
+*.env.local
+
+# Logs and recordings
+*.log
+recordings/
+terminal_recordings/
+*.cast
+
+# OS / Editor artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  terminal-gateway:
+    image: mikrowizard/terminal-gateway:latest
+    container_name: mikrowizard-terminal-gateway
+    restart: unless-stopped
+    network_mode: "host"
+    environment:
+      - PORT=${PORT:-8200}
+      - GATEWAY_BIND=${GATEWAY_BIND:-127.0.0.1}
+      - AGENT_BIND=${AGENT_BIND:-127.0.0.1}
+      - GATEWAY_TOKEN=${GATEWAY_TOKEN}
+      - PYSRV_CONFIG_PATH=/opt/mikrowizard/server-conf.json
+      - PYSRV_REDIS_HOST=${PYSRV_REDIS_HOST:-127.0.0.1:6379}
+      - PYSRV_DATABASE_HOST=${PYSRV_DATABASE_HOST:-127.0.0.1}
+      - PYSRV_DATABASE_PORT=${PYSRV_DATABASE_PORT:-5432}
+      - PYSRV_DATABASE_NAME=${PYSRV_DATABASE_NAME:-MIKROMAN}
+      - PYSRV_DATABASE_USER=${PYSRV_DATABASE_USER:-mikroman}
+      - PYSRV_DATABASE_PASSWORD=${PYSRV_DATABASE_PASSWORD}
+      - PYSRV_CRYPT_KEY=${PYSRV_CRYPT_KEY}
+      - PYSRV_TERMINAL_RECORDINGS_DIR=/opt/mikrowizard/terminal_recordings
+    volumes:
+      - /opt/mikrowizard:/opt/mikrowizard:rw
+      - /opt/mikrowizard/terminal_recordings:/opt/mikrowizard/terminal_recordings:rw
