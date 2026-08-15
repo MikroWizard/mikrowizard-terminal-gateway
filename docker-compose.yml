@@ -6,10 +6,13 @@ services:
     container_name: mikrowizard-terminal-gateway
     restart: unless-stopped
     network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - PORT=${PORT:-8200}
-      - GATEWAY_BIND=${GATEWAY_BIND:-127.0.0.1}
-      - AGENT_BIND=${AGENT_BIND:-127.0.0.1}
+      - PORT=${PORT:-8201}
+      - AGENT_PORT=${AGENT_PORT:-8202}
+      - GATEWAY_BIND=${GATEWAY_BIND:-host.docker.internal}
+      - AGENT_BIND=${AGENT_BIND:-host.docker.internal}
       - GATEWAY_TOKEN=${GATEWAY_TOKEN}
       - PYSRV_CONFIG_PATH=/opt/mikrowizard/server-conf.json
       - PYSRV_REDIS_HOST=${PYSRV_REDIS_HOST:-127.0.0.1:6379}

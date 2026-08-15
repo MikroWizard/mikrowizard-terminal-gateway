@@ -115,18 +115,22 @@ docker compose up -d
 
 | Service | Container Port | Default Host Port | Access Scope |
 | :--- | :--- | :--- | :--- |
-| **Terminal WebSocket / Control** | `8200` | `8200` (or `8201` via nginx) | Loopback (`127.0.0.1`) |
-| **Agent Check-in HTTP** | `8201` | `8201` (or `8202` via nginx) | Loopback / Internal Network |
+| **Terminal WebSocket / Control** | `8201` | `8201` | `host.docker.internal` (docker bridge) |
+| **Agent Check-in HTTP** | `8202` | `8202` | `host.docker.internal` (docker bridge) |
+
+> Port `8200` is reserved for the MikroWizard speedtest module. The gateway binds
+> `host.docker.internal` (the host's docker bridge IP), mirroring the backend
+> (`mikroman`) so the `mikrofront` nginx can reach it.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `PORT` | `8200` | Gateway WebSocket & HTTP control port |
-| `GATEWAY_BIND` | `127.0.0.1` | IP bind address (`0.0.0.0` for separate gateway host) |
+| `PORT` | `8201` | Gateway WebSocket & HTTP control port |
+| `GATEWAY_BIND` | `host.docker.internal` | Bind hostname (`0.0.0.0` for a separate gateway host) |
 | `GATEWAY_TOKEN` | *Auto-generated* | Shared secret for Backend ↔ Gateway authentication |
-| `AGENT_PORT` | `8201` | Port used by ephemeral target agents for phone-home check-ins |
-| `AGENT_BIND` | `127.0.0.1` | Agent HTTP bind address |
+| `AGENT_PORT` | `8202` | Port used by ephemeral target agents for phone-home check-ins |
+| `AGENT_BIND` | `host.docker.internal` | Agent HTTP bind hostname |
 | `PYSRV_CONFIG_PATH` | `/opt/mikrowizard/server-conf.json` | Path to shared MikroWizard configuration |
 | `PYSRV_REDIS_HOST` | `127.0.0.1:6379` | Backend Redis address for session verification |
 | `PYSRV_DATABASE_HOST` | `127.0.0.1` | Backend PostgreSQL database host |

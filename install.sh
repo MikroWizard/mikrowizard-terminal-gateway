@@ -3,7 +3,8 @@
 # MikroWizard+ Terminal Gateway — Standalone Production Installer
 # =============================================================================
 # Pulls and launches the official pre-compiled Docker image from Docker Hub.
-# Integrates seamlessly with local or remote MikroWizard backend deployments.
+# Integrates with a local (same-host) MikroWizard backend deployment. Remote
+# (separate-host) install is WIP and not enabled by default.
 #
 # Usage:
 #   sudo bash install.sh
@@ -34,22 +35,35 @@ echo -e "${BLUE}============================================================${NC
 echo -e "${BLUE}    MikroWizard+ Terminal Gateway — Installation Wizard     ${NC}"
 echo -e "${BLUE}============================================================${NC}"
 
-# Detect local MikroWizard installation
+# Install type: LOCAL (same host) is the default and the only fully supported path.
+# WORK NEEDED (remote / separate-host install): not yet implemented end-to-end.
+# The remote branch is kept below behind INSTALL_TYPE=remote and is NOT prompted.
 LOCAL=1
-if [ ! -f "$CONF_FILE" ]; then
+if [ "${INSTALL_TYPE:-local}" = "remote" ]; then
     LOCAL=0
+    echo -e "${YELLOW}[+] Remote installation mode (INSTALL_TYPE=remote).${NC}"
+fi
+
+# A local install needs the MikroWizard config to read Redis/DB + the shared token.
+if [ "$LOCAL" = "1" ] && [ ! -f "$CONF_FILE" ]; then
     if [ -t 0 ]; then
-        read -p "MikroWizard config not found at $DEFAULT_CONF. Enter path or press Enter for remote host install: " INPUT_CONF
+        read -p "MikroWizard config not found at $DEFAULT_CONF. Enter the full path to it: " INPUT_CONF
         if [ -n "$INPUT_CONF" ] && [ -f "$INPUT_CONF" ]; then
             CONF_FILE="$INPUT_CONF"
-            LOCAL=1
+        else
+            echo -e "${RED}[-] Error: local install requires a valid MikroWizard config file.${NC}"
+            exit 1
         fi
+    else
+        echo -e "${RED}[-] Error: MikroWizard server-conf.json not found at $DEFAULT_CONF (local install).${NC}"
+        exit 1
     fi
 fi
 
 if [ "$LOCAL" = "1" ]; then
     echo -e "${GREEN}[+] Local MikroWizard instance detected: $CONF_FILE${NC}"
     REDIS_HOST=$(jq -r '.PYSRV_REDIS_HOST // "127.0.0.1:6379"' "$CONF_FILE" 2>/dev/null || echo "127.0.0.1:6379")
+    REDIS_PASSWORD=$(jq -r '.PYSRV_REDIS_PASSWORD // ""' "$CONF_FILE" 2>/dev/null || echo "")
     CRYPT_KEY=$(jq -r '.PYSRV_CRYPT_KEY // ""' "$CONF_FILE" 2>/dev/null || echo "")
     DB_HOST=$(jq -r '.PYSRV_DATABASE_HOST // "127.0.0.1"' "$CONF_FILE" 2>/dev/null || echo "127.0.0.1")
     DB_PORT=$(jq -r '.PYSRV_DATABASE_PORT // "5432"' "$CONF_FILE" 2>/dev/null || echo "5432")
@@ -61,7 +75,7 @@ if [ "$LOCAL" = "1" ]; then
     if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
         TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32)
     fi
-    GATEWAY_BIND="127.0.0.1"
+    GATEWAY_BIND="host.docker.internal"
 else
     echo -e "${YELLOW}[+] Remote installation mode (separate gateway host).${NC}"
     TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>/dev/null || openssl rand -hex 32)
@@ -86,7 +100,8 @@ else
     fi
 fi
 
-PORT=8200
+PORT=8201
+AGENT_PORT=8202
 RECORDINGS_DIR="/opt/mikrowizard/terminal_recordings"
 mkdir -p "$RECORDINGS_DIR"
 chown -R 10001:10001 "$RECORDINGS_DIR" 2>/dev/null || true
@@ -94,9 +109,11 @@ chown -R 10001:10001 "$RECORDINGS_DIR" 2>/dev/null || true
 # Save environment configuration securely
 cat > "$GATEWAY_DIR/gateway.env" <<EOF
 PORT=$PORT
+AGENT_PORT=$AGENT_PORT
 GATEWAY_BIND=$GATEWAY_BIND
 GATEWAY_TOKEN=$TOKEN
 PYSRV_REDIS_HOST=$REDIS_HOST
+PYSRV_REDIS_PASSWORD=$REDIS_PASSWORD
 PYSRV_CRYPT_KEY=$CRYPT_KEY
 PYSRV_DATABASE_HOST=$DB_HOST
 PYSRV_DATABASE_PORT=$DB_PORT
@@ -119,12 +136,15 @@ CONFIG_FLAG=""
 
 docker run -d --name=mikrowizard-terminal-gateway \
   --network=host \
+  --add-host=host.docker.internal:host-gateway \
   -e PORT="$PORT" \
+  -e AGENT_PORT="$AGENT_PORT" \
   -e GATEWAY_TOKEN="$TOKEN" \
   -e GATEWAY_BIND="$GATEWAY_BIND" \
   -e AGENT_BIND="$GATEWAY_BIND" \
   -e PYSRV_CRYPT_KEY="$CRYPT_KEY" \
   -e PYSRV_REDIS_HOST="$REDIS_HOST" \
+  -e PYSRV_REDIS_PASSWORD="$REDIS_PASSWORD" \
   -e PYSRV_DATABASE_HOST="$DB_HOST" \
   -e PYSRV_DATABASE_PORT="$DB_PORT" \
   -e PYSRV_DATABASE_NAME="$DB_NAME" \
@@ -139,7 +159,9 @@ docker run -d --name=mikrowizard-terminal-gateway \
 echo -n "[+] Waiting for gateway to initialize"
 MAX_RETRIES=30
 COUNT=0
-until curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/health" > /dev/null 2>&1; do
+# The gateway binds host.docker.internal (the host's docker bridge IP), which is not
+# 127.0.0.1, so poll from inside the container where that hostname resolves.
+until docker exec mikrowizard-terminal-gateway curl -sf -H "Authorization: Bearer $TOKEN" "http://host.docker.internal:$PORT/health" > /dev/null 2>&1; do
     sleep 2
     echo -n "."
     COUNT=$((COUNT+1))
@@ -153,7 +175,7 @@ echo -e " ${GREEN}[OK]${NC}"
 
 if [ "$LOCAL" = "1" ]; then
     echo -e "${GREEN}[+] Updating MikroWizard configuration in $CONF_FILE...${NC}"
-    jq ". += {terminal_gateway_enabled: true, terminal_gateway_url: \"http://127.0.0.1:$PORT\", terminal_gateway_token: \"$TOKEN\"}" "$CONF_FILE" > /tmp/server.json
+    jq ". += {terminal_gateway_enabled: true, terminal_gateway_url: \"http://host.docker.internal:$PORT\", terminal_gateway_token: \"$TOKEN\"}" "$CONF_FILE" > /tmp/server.json
     mv /tmp/server.json "$CONF_FILE"
 
     if [ "$(docker container inspect -f '{{.State.Running}}' mikroman 2>/dev/null)" == "true" ]; then
@@ -165,7 +187,8 @@ if [ "$LOCAL" = "1" ]; then
     fi
     echo -e "${BLUE}============================================================${NC}"
     echo -e "${GREEN} SUCCESS! MikroWizard+ Terminal Gateway is active and linked!${NC}"
-    echo -e " Port: $PORT (Loopback: 127.0.0.1)"
+    echo -e " Port: $PORT (bind: $GATEWAY_BIND)"
+    echo -e " Agent Port: $AGENT_PORT"
     echo -e "${BLUE}============================================================${NC}"
 else
     REMOTE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
